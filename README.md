@@ -1,1 +1,1 @@
-# crazytom - A taling Tom Clone
+# crazytom - A talking Tom Clone

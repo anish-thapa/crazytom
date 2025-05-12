@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crazy Tom - Voice Changer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        /* Optional: Custom Font */
+        /* @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap'); */
+        /* body { font-family: 'Poppins', sans-serif; } */
+
+        /* --- Animations --- */
+        @keyframes talk {
+            0%, 100% { transform: scale(1) rotate(0deg) translateY(0); }
+            25% { transform: scale(1.07) rotate(1.5deg) translateY(-4px); }
+            50% { transform: scale(1.05) rotate(-1.5deg) translateY(0px); }
+            75% { transform: scale(1.08) rotate(1deg) translateY(-3px); }
+        }
+        .talking { animation: talk 0.18s infinite; }
+
+        @keyframes pulse { /* Subtle breathing */
+            0%, 100% { transform: scale(1); opacity: 0.95; }
+            50% { transform: scale(1.03); opacity: 1; }
+        }
+        .pulse { animation: pulse 2.5s infinite ease-in-out; }
+
+        @keyframes float { /* Background bubbles */
+            0%, 100% { transform: translateY(0px) scale(1); }
+            50% { transform: translateY(-20px) scale(1.05); }
+        }
+        .floating { animation: float 5s infinite ease-in-out; }
+
+        /* --- Cat Image Interaction --- */
+        #recordBtnImage { /* Target the image */
+            transition: transform 0.2s ease-out, filter 0.3s ease; /* Changed box-shadow to filter */
+            filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
+            cursor: pointer; /* Explicitly set cursor */
+        }
+        #recordBtnImage:hover:not(.no-hover) {
+            transform: scale(1.06) translateY(-3px);
+            filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.4));
+        }
+        #recordBtnImage:active:not(.no-hover) {
+            transform: scale(1.02) translateY(0px);
+            filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.2));
+        }
+        /* Class to disable hover/click visually during non-interactive states */
+        .no-hover {
+            cursor: default !important;
+            filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3)); /* Keep base shadow */
+        }
+
+
+        /* --- Status Indicator Styling --- */
+        @keyframes statusPulse {
+             0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.3); }
+             70% { box-shadow: 0 0 0 8px rgba(255, 255, 255, 0); }
+        }
+        .status-recording {
+            background-image: linear-gradient(to right, theme('colors.red.500'), theme('colors.orange.500'));
+            animation: statusPulse 1.5s infinite cubic-bezier(0.66, 0, 0, 1);
+        }
+        .status-paused {
+            background-image: linear-gradient(to right, theme('colors.amber.400'), theme('colors.yellow.500'));
+        }
+        .status-processing {
+            background-image: linear-gradient(to right, theme('colors.indigo.500'), theme('colors.purple.500'));
+            animation: statusPulse 1.2s infinite cubic-bezier(0.66, 0, 0, 1);
+        }
+         .status-playing {
+            background-image: linear-gradient(to right, theme('colors.emerald.500'), theme('colors.teal.500'));
+         }
+         .status-ready {
+            background-image: linear-gradient(to right, theme('colors.sky.500'), theme('colors.cyan.500'));
+         }
+
+
+        /* --- Scrollbar --- */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 10px; border: 1px solid rgba(0,0,0,0.2); }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
+
+         /* Visualizer */
+         #visualizer {
+            position: fixed; bottom: 0; left: 0; width: 100%; height: 90px;
+            pointer-events: none; opacity: 0.7; z-index: 5;
+            mask-image: linear-gradient(to top, black 60%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to top, black 60%, transparent 100%);
+         }
+
+        /* Speech Bubble Arrow */
+         #speechBubble > div:last-child {
+             position: absolute; bottom: -10px; left: 50%;
+             transform: translateX(-50%); width: 0; height: 0;
+             border-left: 10px solid transparent; border-right: 10px solid transparent;
+             border-top: 10px solid white;
+         }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-900 via-indigo-900 to-purple-950 text-gray-200 min-h-screen flex flex-col items-center justify-between p-4 font-sans antialiased relative overflow-hidden">
+
+    <!-- Header -->
+     <header class="w-full max-w-lg mt-4 md:mt-8 flex items-center justify-center gap-3 relative z-20">
+         <!-- Logo Icon -->
+         <div class="text-cyan-400 text-3xl md:text-4xl transform transition-transform hover:scale-110">
+             <i class="fa-solid fa-microphone-lines"></i>
+         </div>
+         <h1 class="text-3xl md:text-4xl font-bold text-white drop-shadow-lg">
+             Crazy Tom
+         </h1>
+     </header>
+
+    <!-- Main Interaction Card -->
+    <main class="max-w-sm w-full bg-black/25 backdrop-blur-xl border border-white/10 rounded-[28px] shadow-2xl overflow-hidden p-6 md:p-8 relative z-10 flex flex-col items-center my-auto">
+
+        <!-- UPDATED Instructions -->
+        <p class="text-center text-gray-300/80 mb-8 text-sm md:text-base px-4">
+            Click the <span class="font-semibold text-cyan-300">CAT</span> to Record / Stop.<br>
+            Press <span class="font-semibold text-cyan-300">SPACE</span> to Pause / Resume.
+        </p>
+
+        <div class="relative mb-10 group w-full flex flex-col items-center">
+            <!-- Cat Image & Speech Bubble Container -->
+            <div class="relative mb-4">
+                 <!-- Cat SVG - This is the CLICKABLE element -->
+                 <img id="recordBtnImage"
+                      src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200"><defs><radialGradient id="gradEye" cx="50%" cy="50%" r="50%" fx="30%" fy="30%"><stop offset="0%" style="stop-color:rgb(150,255,255);stop-opacity:1" /><stop offset="100%" style="stop-color:rgb(0,200,200);stop-opacity:1" /></radialGradient><filter id="glow"><feGaussianBlur stdDeviation="2.5" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M100,180 Q50,180 20,150 Q-10,100 20,50 Q50,20 100,20 Q150,20 180,50 Q210,100 180,150 Q150,180 100,180 Z" fill="%231a1a1d"/> <path d="M30,60 Q40,30 70,40 L60,60 Z M170,60 Q160,30 130,40 L140,60 Z" fill="%23111113"/> <circle cx="70" cy="85" r="20" fill="url(%23gradEye)" style="filter:url(%23glow)"/> <circle cx="130" cy="85" r="20" fill="url(%23gradEye)" style="filter:url(%23glow)"/> <path d="M60,130 Q100,160 140,130 Q100,145 60,130" fill="%230ff" style="filter:url(%23glow)"/></svg>'
+                      alt="Crazy Tom Cat - Click to Record"
+                      class="w-48 h-48 md:w-56 md:h-56 object-contain pulse cursor-pointer">
+                 <!-- Speech Bubble -->
+                 <div id="speechBubble" class="absolute -top-20 left-1/2 transform -translate-x-1/2 bg-white rounded-xl p-3 shadow-lg hidden min-w-[120px] text-center opacity-0 transition-opacity duration-300">
+                     <div class="text-sm md:text-base text-indigo-900 font-semibold">Say something!</div>
+                     <div></div> <!-- Arrow element -->
+                 </div>
+            </div>
+
+            <!-- Status indicator (NOT clickable) -->
+            <div id="status" class="absolute bottom-[-40px] text-white text-sm font-semibold px-5 py-2 rounded-full shadow-lg whitespace-nowrap transition-all duration-300 status-ready">
+                Ready
+            </div>
+        </div>
+
+        <!-- Hidden logical button -->
+        <button id="recordBtn" class="hidden"></button>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="w-full text-center py-4 text-xs text-gray-400/60 hover:text-gray-400/90 transition-colors z-20">
+        Built by Anish Thapa
+    </footer>
+
+    <!-- Audio visualizer -->
+    <canvas id="visualizer"></canvas>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- DOM Elements ---
+            const recordBtn = document.getElementById('recordBtn'); // Logical button state
+            const catImage = document.getElementById('recordBtnImage'); // Click target
+            const status = document.getElementById('status');
+            const speechBubble = document.getElementById('speechBubble');
+            const speechBubbleText = speechBubble.querySelector('div:first-child');
+            const visualizer = document.getElementById('visualizer');
+            const visCtx = visualizer.getContext('2d');
+
+            // --- Web Audio API Setup ---
+            let audioContext;
+            let mediaStreamSource = null;
+            let currentSourceNode = null;
+            let analyser = null;
+            let dataArray = null;
+            let animationId = null;
+
+            // --- Visualizer Functions ---
+             function resizeVisualizer() {
+                 visualizer.width = window.innerWidth;
+                 visualizer.height = 90;
+             }
+             resizeVisualizer();
+             window.addEventListener('resize', resizeVisualizer);
+
+             function setupAnalyser() {
+                 if (!audioContext || analyser) return;
+                 try {
+                     analyser = audioContext.createAnalyser();
+                     analyser.fftSize = 256;
+                     const bufferLength = analyser.frequencyBinCount;
+                     dataArray = new Uint8Array(bufferLength);
+                 } catch (e) { console.error("Failed Analyser", e); analyser = null; }
+             }
+
+            function drawVisualizer() {
+                 if (!analyser || !dataArray || !visCtx || animationId === null) return;
+                 requestAnimationFrame(drawVisualizer);
+                 analyser.getByteFrequencyData(dataArray);
+                 visCtx.clearRect(0, 0, visualizer.width, visualizer.height);
+                 const bufferLength = analyser.frequencyBinCount;
+                 const barWidth = (visualizer.width / bufferLength) * 2.0;
+                 let x = 0;
+                 for (let i = 0; i < bufferLength; i++) {
+                     const barHeight = Math.pow(dataArray[i] / 255, 2.2) * visualizer.height * 0.9;
+                     const hue = 180 + (i / bufferLength) * 120;
+                     visCtx.fillStyle = `hsla(${hue}, 80%, 60%, 0.8)`;
+                     visCtx.fillRect(x, visualizer.height - barHeight, barWidth, barHeight);
+                     x += barWidth + 2;
+                 }
+            }
+
+             function startVisualizerDrawing() {
+                 if (animationId === null && analyser && visCtx) {
+                     animationId = requestAnimationFrame(drawVisualizer);
+                 }
+             }
+
+             function stopVisualizer() {
+                 if (animationId !== null) {
+                     cancelAnimationFrame(animationId);
+                     animationId = null;
+                     if(visCtx) visCtx.clearRect(0, 0, visualizer.width, visualizer.height);
+                 }
+             }
+
+            // --- Initialize AudioContext ---
+            function initAudioContext() {
+                 if (!audioContext) {
+                     try {
+                         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                         console.log("AudioContext initialized.");
+                         setupAnalyser();
+                     } catch (e) {
+                         console.error("Web Audio API is not supported", e);
+                         status.textContent = "Audio Error: Not supported";
+                         catImage.style.cursor = 'not-allowed';
+                         catImage.classList.add('no-hover'); // Prevent hover effect on error
+                         recordBtn.disabled = true;
+                         return null;
+                     }
+                 }
+                 if (audioContext.state === 'suspended') {
+                     audioContext.resume().then(() => {
+                         console.log("AudioContext resumed.");
+                         if (!analyser) setupAnalyser();
+                     });
+                 }
+                 return audioContext;
+            }
+
+            // --- State Variables ---
+            let mediaRecorder;
+            let audioChunks = [];
+            let recordingStream = null;
+            let isPaused = false;
+
+            // --- Function to Reset UI ---
+            const resetUI = (errorMessage = null) => {
+                 catImage.style.cursor = 'pointer';
+                 catImage.classList.remove('no-hover');
+                 recordBtn.disabled = false; // Sync logical button state
+                 catImage.classList.remove('talking'); // Use catImage for animation class
+                 catImage.classList.add('pulse');
+                 status.textContent = errorMessage || 'Ready';
+                 status.className = `absolute bottom-[-40px] text-white text-sm font-semibold px-5 py-2 rounded-full shadow-lg whitespace-nowrap transition-all duration-300 status-ready`;
+                 isPaused = false;
+                 speechBubble.classList.remove('opacity-100');
+                 setTimeout(() => { if (!speechBubble.classList.contains('opacity-100')) speechBubble.classList.add('hidden'); }, 300);
+                 stopVisualizer();
+
+                 if (recordingStream) { recordingStream.getTracks().forEach(track => track.stop()); recordingStream = null; }
+                 if (mediaStreamSource) { try { mediaStreamSource.disconnect(); } catch(e){} mediaStreamSource = null; }
+                 if (currentSourceNode) { try { currentSourceNode.onended = null; currentSourceNode.stop(); currentSourceNode.disconnect(); } catch (e) {} currentSourceNode = null; }
+
+                 mediaRecorder = null;
+                 audioChunks = [];
+                 console.log("UI Reset completed");
+            };
+
+            // --- Function to Update UI State ---
+            const setUIState = (state) => {
+                 catImage.classList.remove('pulse', 'talking', 'no-hover'); // Reset image classes
+                 catImage.style.cursor = 'pointer'; // Default cursor
+                 recordBtn.disabled = false; // Default logical state
+
+                 let statusText = 'Ready';
+                 let statusClass = 'status-ready';
+                 let showBubble = false;
+                 let bubbleTextContent = "";
+                 let catAnimationClass = 'pulse';
+
+                 switch (state) {
+                     case 'requesting':
+                         statusText = 'Requesting Mic...'; statusClass = 'status-processing';
+                         recordBtn.disabled = true; catImage.classList.add('no-hover'); catImage.style.cursor = 'default';
+                         catAnimationClass = '';
+                         break;
+                     case 'listening':
+                         statusText = 'Recording...'; statusClass = 'status-recording';
+                         isPaused = false;
+                         showBubble = true; bubbleTextContent = "Listening...";
+                         catAnimationClass = ''; // Stop pulse during recording
+                         break;
+                     case 'paused':
+                         statusText = 'Paused'; statusClass = 'status-paused';
+                         isPaused = true;
+                         showBubble = true; bubbleTextContent = "Paused...";
+                         catAnimationClass = '';
+                         break;
+                     case 'processing':
+                         statusText = 'Mixing sounds...'; statusClass = 'status-processing';
+                         recordBtn.disabled = true; catImage.classList.add('no-hover'); catImage.style.cursor = 'default';
+                         showBubble = true; bubbleTextContent = "Thinking...";
+                         catAnimationClass = '';
+                         break;
+                     case 'playing':
+                         statusText = 'Talking!'; statusClass = 'status-playing';
+                         recordBtn.disabled = true; catImage.classList.add('no-hover'); catImage.style.cursor = 'default';
+                         showBubble = true; bubbleTextContent = getRandomPhrase();
+                         catAnimationClass = 'talking';
+                         break;
+                     case 'error':
+                         statusText = status.textContent || 'Error!'; statusClass = 'status-recording';
+                         catImage.classList.add('no-hover'); catImage.style.cursor = 'default'; // No interaction on error
+                         catAnimationClass = '';
+                         setTimeout(() => resetUI(statusText), 2500);
+                         break;
+                     case 'ready':
+                     default: resetUI(); return;
+                 }
+
+                 status.textContent = statusText;
+                 status.className = `absolute bottom-[-40px] text-white text-sm font-semibold px-5 py-2 rounded-full shadow-lg whitespace-nowrap transition-all duration-300 ${statusClass}`;
+
+                 // Apply animation class directly to the image
+                 if(catAnimationClass) catImage.classList.add(catAnimationClass);
+
+                 if (showBubble) {
+                     speechBubbleText.textContent = bubbleTextContent;
+                     speechBubble.classList.remove('hidden');
+                     void speechBubble.offsetWidth; // Reflow
+                     speechBubble.classList.add('opacity-100');
+                 } else {
+                     speechBubble.classList.remove('opacity-100');
+                     setTimeout(() => { if (!speechBubble.classList.contains('opacity-100')) speechBubble.classList.add('hidden'); }, 300);
+                 }
+             };
+
+            // --- Random Phrase Function ---
+             function getRandomPhrase() {
+                 const phrases = ["That's crazy!", "Hahaha!", "Weird voice!", "LOL!", "Bwahaha!", "You sound silly!", "My turn!", "Boop!", "Meow?", "Teehee!", "Again! Again!"];
+                 return phrases[Math.floor(Math.random() * phrases.length)];
+             }
+
+            // --- CLICK HANDLER FOR CAT IMAGE ---
+             catImage.addEventListener('click', async () => {
+                // Prevent action if visually disabled (error state, etc.)
+                if (catImage.classList.contains('no-hover')) {
+                    console.log("Interaction disabled in current state.");
+                    return;
+                }
+
+                 const currentContext = initAudioContext();
+                 if (!currentContext) {
+                     console.error("Cannot proceed without AudioContext.");
+                     return; // Stop if context failed
+                 }
+
+                 // If recording is active (recording or paused), stop it
+                 if (mediaRecorder && (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused')) {
+                     console.log("Stopping recording via image click...");
+                     if (mediaRecorder.state !== 'inactive') {
+                         mediaRecorder.stop();
+                         // UI state change will happen in mediaRecorder.onstop
+                     }
+                 }
+                 // Otherwise, if inactive, start a new recording
+                 else if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                     console.log("Starting recording via image click...");
+                     resetUI(); // Ensure clean state before starting
+                     startRecording(); // Async function
+                 } else {
+                    console.warn("MediaRecorder in unexpected state:", mediaRecorder.state);
+                 }
+             });
+
+
+            // --- Start Recording Function ---
+             async function startRecording() {
+                 setUIState('requesting');
+                 try {
+                     recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                     // Setup MediaRecorder
+                     const options = { mimeType: 'audio/webm;codecs=opus' };
+                     try { mediaRecorder = new MediaRecorder(recordingStream, options); }
+                     catch (e1) {
+                         console.warn("Opus codec not supported, trying VP8/Vorbis");
+                         try { mediaRecorder = new MediaRecorder(recordingStream, { mimeType: 'audio/webm' }); }
+                         catch(e2) { console.warn("WebM fallback failed, using default"); mediaRecorder = new MediaRecorder(recordingStream); }
+                     }
+                     console.log("Using mimeType:", mediaRecorder.mimeType);
+                     audioChunks = [];
+
+                     // Connect stream to analyser for live visualization
+                     if (audioContext && analyser) {
+                          if (mediaStreamSource) { try { mediaStreamSource.disconnect(); } catch(e){} }
+                          mediaStreamSource = audioContext.createMediaStreamSource(recordingStream);
+                          try {
+                             mediaStreamSource.connect(analyser);
+                             startVisualizerDrawing();
+                             console.log("Recording stream connected to visualizer.");
+                          } catch (connectError) {
+                              console.error("Error connecting media stream to analyser:", connectError);
+                              // Potentially reset analyser or UI here if connection fails critically
+                          }
+                     } else {
+                          console.warn("AudioContext or Analyser not ready for recording visualization.");
+                     }
+
+                     // MediaRecorder Event Handlers
+                     mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunks.push(event.data); };
+
+                     mediaRecorder.onstop = async () => {
+                          console.log("Recorder stopped.");
+                          stopVisualizer();
+                           if (recordingStream) { recordingStream.getTracks().forEach(track => track.stop()); recordingStream = null; }
+                           if (mediaStreamSource) { try { mediaStreamSource.disconnect(); } catch(e){} mediaStreamSource = null; }
+
+                          setUIState('processing');
+
+                          if (audioChunks.length === 0) { resetUI('No audio recorded'); return; }
+
+                          // Process and Play Audio
+                          try {
+                              const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+                              const arrayBuffer = await audioBlob.arrayBuffer();
+                              if (audioContext.state === 'suspended') await audioContext.resume();
+
+                              // Decode Audio Data - Added Error Handling
+                              audioContext.decodeAudioData(arrayBuffer,
+                                 (decodedBuffer) => { console.log("Audio decoded."); playAlteredAudio(decodedBuffer); },
+                                 (decodeError) => {
+                                     console.error("Error decoding audio data:", decodeError);
+                                     // Provide more specific feedback if possible
+                                     let errorMsg = `Decode Error: ${decodeError.name || 'Unknown error'}`;
+                                     if (decodeError.message) errorMsg += ` - ${decodeError.message}`;
+                                     resetUI(errorMsg);
+                                 }
+                              );
+                          } catch (processError) {
+                               console.error("Error processing audio blob:", processError);
+                               resetUI('Error processing audio');
+                           }
+                           audioChunks = [];
+                      };
+
+                       mediaRecorder.onpause = () => { stopVisualizer(); setUIState('paused'); };
+                       mediaRecorder.onresume = () => { if (analyser && mediaStreamSource) startVisualizerDrawing(); setUIState('listening'); };
+                       mediaRecorder.onerror = (event) => {
+                           console.error("MediaRecorder error:", event.error);
+                           status.textContent = `Record Error: ${event.error.name}`;
+                           setUIState('error'); // Trigger error state
+                       };
+
+                     // Start Recording
+                     mediaRecorder.start();
+                     setUIState('listening');
+
+                 } catch (error) {
+                      console.error('Mic/Recording Error:', error);
+                      status.textContent = (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') ? 'Microphone access denied!' : `Mic Error: ${error.name}`;
+                      setUIState('error'); // Trigger error state
+                 }
+             }
+
+            // --- Play Altered Audio (FUNNY VOICE EFFECT) ---
+            function playAlteredAudio(audioBuffer) {
+                 if (!audioContext || !analyser) { resetUI('Audio playback error'); return; }
+                 if (currentSourceNode) { try { currentSourceNode.stop(); currentSourceNode.disconnect(); } catch (e) {} }
+
+                 const source = audioContext.createBufferSource();
+                 const filter = audioContext.createBiquadFilter();
+                 const compressor = audioContext.createDynamicsCompressor();
+                 const outputGain = audioContext.createGain();
+
+                 source.buffer = audioBuffer;
+                 source.playbackRate.value = 1.6; // Chipmunk pitch
+
+                 filter.type = 'peaking';
+                 filter.frequency.value = 1800;
+                 filter.Q.value = 4;
+                 filter.gain.value = 15; // dB
+
+                 // Connections
+                 source.connect(filter);
+                 filter.connect(compressor);
+                 compressor.connect(outputGain);
+                 outputGain.connect(audioContext.destination);
+                 // Connect to analyser AFTER other processing
+                 outputGain.connect(analyser);
+                 startVisualizerDrawing();
+
+                 setUIState('playing');
+                 source.start(0);
+                 currentSourceNode = source;
+
+                 source.onended = () => {
+                     console.log("Playback finished.");
+                     stopVisualizer();
+                     // Disconnect safely
+                     try { if(source.numberOfOutputs > 0) source.disconnect(); } catch(e){}
+                     try { if(filter.numberOfOutputs > 0) filter.disconnect(); } catch(e){}
+                     try { if(compressor.numberOfOutputs > 0) compressor.disconnect(); } catch(e){}
+                     try { if(outputGain.numberOfOutputs > 0) outputGain.disconnect(); } catch(e){}
+
+                     currentSourceNode = null;
+                     setUIState('ready');
+                 };
+                  source.onerror = (e) => { console.error("Audio source node error:", e); stopVisualizer(); resetUI("Playback error"); }
+            }
+
+            // --- Pause/Resume Handler (Space Key) ---
+            document.addEventListener('keydown', (event) => {
+                 if (event.code === 'Space' && !event.repeat && mediaRecorder && (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused')) {
+                     event.preventDefault();
+                     if (mediaRecorder.state === 'recording') mediaRecorder.pause();
+                     else if (mediaRecorder.state === 'paused') mediaRecorder.resume();
+                 }
+            });
+
+            // --- Initial Setup ---
+            resetUI();
+
+        });
+    </script>
+</body>
+</html>

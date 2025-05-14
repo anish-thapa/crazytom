@@ -160,6 +160,24 @@
     <!-- Audio visualizer -->
     <canvas id="visualizer"></canvas>
 
+    <!-- Modal for Mic Permission Info -->
+    <div id="micPermissionModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-gray-800 p-6 rounded-xl shadow-xl max-w-xs w-full text-center border border-white/20">
+            <div class="text-cyan-400 text-5xl mb-4">
+                <i class="fa-solid fa-microphone-lines"></i>
+            </div>
+            <h3 class="text-xl font-semibold text-white mb-2">Microphone Access Needed</h3>
+            <p class="text-gray-300 mb-6 text-sm">
+                Crazy Tom needs to hear you to talk back!
+                When your browser asks, please click "<strong>Allow</strong>" to use your microphone.
+            </p>
+            <button id="proceedMicPermissionBtn" class="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-2.5 px-6 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-opacity-75">
+                Okay, Got It!
+            </button>
+        </div>
+    </div>
+
+
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             // --- DOM Elements ---
@@ -170,9 +188,13 @@
             const speechBubbleText = speechBubble.querySelector('div:first-child');
             const visualizer = document.getElementById('visualizer');
             const visCtx = visualizer.getContext('2d');
+            const micPermissionModal = document.getElementById('micPermissionModal');
+            const proceedMicPermissionBtn = document.getElementById('proceedMicPermissionBtn');
+
 
             // --- Web Audio API Setup ---
             let audioContext;
+            let audioContextUnlocked = false; // Flag for iOS audio unlock
             let mediaStreamSource = null;
             let currentSourceNode = null;
             let analyser = null;
@@ -181,10 +203,13 @@
             let animationId = null;
 
             // --- Silence Detection ---
-            const SILENCE_THRESHOLD = 5; // Amplitude deviation from baseline (128). Adjust this value! Lower means more sensitive to noise.
-            const SILENCE_DURATION_MS = 3500; // How long silence must last to trigger stop (milliseconds). Adjust this value!
+            const SILENCE_THRESHOLD = 5;
+            const SILENCE_DURATION_MS = 3500;
             let silenceTimer = null;
-            let bufferLengthTime; // Store buffer length for time domain data
+            let bufferLengthTime;
+
+            // --- Mic Permission Modal ---
+            let hasShownMicInfoModal = localStorage.getItem('hasShownCrazyTomMicInfo') === 'true';
 
             // --- Visualizer Functions ---
              function resizeVisualizer() {
@@ -198,14 +223,13 @@
                  if (!audioContext || analyser) return;
                  try {
                      analyser = audioContext.createAnalyser();
-                     analyser.fftSize = 256; // For visualizer (frequency)
-                     analyser.smoothingTimeConstant = 0.6; // Smoothing for visualizer & detection
+                     analyser.fftSize = 256;
+                     analyser.smoothingTimeConstant = 0.6;
 
                      const bufferLengthFreq = analyser.frequencyBinCount;
                      dataArrayFreq = new Uint8Array(bufferLengthFreq);
 
-                     // Also setup for time domain data (silence detection)
-                     bufferLengthTime = analyser.fftSize; // Time domain uses fftSize
+                     bufferLengthTime = analyser.fftSize;
                      dataArrayTime = new Uint8Array(bufferLengthTime);
 
                  } catch (e) { /* console.error("Failed Analyser setup", e); */ analyser = null; }
@@ -213,121 +237,108 @@
 
              function checkForSilence() {
                 if (!analyser || !dataArrayTime || !mediaRecorder || mediaRecorder.state !== 'recording') {
-                    // If not recording, ensure timer is cleared
-                    if (silenceTimer) {
-                        clearTimeout(silenceTimer);
-                        silenceTimer = null;
-                    }
+                    if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
                     return;
                 }
-
-                analyser.getByteTimeDomainData(dataArrayTime); // Get current amplitude data
-
+                analyser.getByteTimeDomainData(dataArrayTime);
                 let maxAmplitude = 0;
                 for (let i = 0; i < bufferLengthTime; i++) {
-                    const amplitude = Math.abs(dataArrayTime[i] - 128); // Deviation from the silent baseline (128)
-                    if (amplitude > maxAmplitude) {
-                        maxAmplitude = amplitude;
-                    }
+                    const amplitude = Math.abs(dataArrayTime[i] - 128);
+                    if (amplitude > maxAmplitude) maxAmplitude = amplitude;
                 }
-
-                // console.log("Max Amplitude:", maxAmplitude); // For debugging threshold
-
                 if (maxAmplitude < SILENCE_THRESHOLD) {
-                    // Silence detected
-                    if (!silenceTimer) { // Start timer only if it's not already running
-                        // console.log("Silence detected, starting timer...");
+                    if (!silenceTimer) {
                         silenceTimer = setTimeout(() => {
-                            // console.log("Silence duration met, stopping recording automatically.");
-                            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                                mediaRecorder.stop();
-                                // UI update will happen in onstop handler
-                            }
-                            silenceTimer = null; // Reset timer ID
+                            if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+                            silenceTimer = null;
                         }, SILENCE_DURATION_MS);
                     }
                 } else {
-                    // Sound detected
-                    if (silenceTimer) {
-                        // console.log("Sound detected, clearing silence timer.");
-                        clearTimeout(silenceTimer);
-                        silenceTimer = null; // Reset timer ID
-                    }
+                    if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
                 }
             }
 
-            function drawVisualizerAndCheckSilence() { // Renamed function
+            function drawVisualizerAndCheckSilence() {
                  if (!analyser || !dataArrayFreq || !visCtx || animationId === null) return;
-
-                 animationId = requestAnimationFrame(drawVisualizerAndCheckSilence); // Keep the loop going
-
-                 // --- Silence Check ---
-                 // Perform check regardless of visualizer drawing, as long as analyser is active
+                 animationId = requestAnimationFrame(drawVisualizerAndCheckSilence);
                  checkForSilence();
-
-                 // --- Visualizer Drawing ---
                  analyser.getByteFrequencyData(dataArrayFreq);
                  visCtx.clearRect(0, 0, visualizer.width, visualizer.height);
                  const bufferLengthFreq = analyser.frequencyBinCount;
                  const barWidth = (visualizer.width / bufferLengthFreq) * 2.0;
                  let x = 0;
-                 let currentEnergy = 0; // Optional: calculate energy for more nuanced visuals/detection
                  for (let i = 0; i < bufferLengthFreq; i++) {
                      const barHeight = Math.pow(dataArrayFreq[i] / 255, 2.2) * visualizer.height * 0.9;
-                     currentEnergy += dataArrayFreq[i]; // Sum energy
-                     const hue = 180 + (i / bufferLengthFreq) * 120; // Blue to Purple gradient
+                     const hue = 180 + (i / bufferLengthFreq) * 120;
                      visCtx.fillStyle = `hsla(${hue}, 80%, 60%, 0.8)`;
                      visCtx.fillRect(x, visualizer.height - barHeight, barWidth, barHeight);
                      x += barWidth + 2;
                  }
             }
 
-             function startVisualizerAndSilenceCheck() { // Renamed function
+             function startVisualizerAndSilenceCheck() {
                  if (animationId === null && analyser && visCtx) {
-                    //  console.log("Starting visualizer and silence check loop.");
                      animationId = requestAnimationFrame(drawVisualizerAndCheckSilence);
                  }
              }
 
-             function stopVisualizerAndSilenceCheck() { // Renamed function
+             function stopVisualizerAndSilenceCheck() {
                  if (animationId !== null) {
-                    //  console.log("Stopping visualizer and silence check loop.");
                      cancelAnimationFrame(animationId);
                      animationId = null;
                      if(visCtx) visCtx.clearRect(0, 0, visualizer.width, visualizer.height);
                  }
-                  // Ensure silence timer is also cleared when stopping visualization explicitly
-                 if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = null;
-                    // console.log("Cleared silence timer on visualizer stop.");
-                 }
+                 if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
              }
 
-            // --- Initialize AudioContext ---
+            // --- Initialize AudioContext & Unlock for iOS ---
             function initAudioContext() {
-                 if (!audioContext) {
-                     try {
-                         audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                        //  console.log("AudioContext initialized.");
-                         setupAnalyser(); // Make sure analyser is set up
-                     } catch (e) {
-                        //  console.error("Web Audio API is not supported", e);
-                         status.textContent = "Audio Error: Not supported";
-                         catImage.style.cursor = 'not-allowed';
-                         catImage.classList.add('no-hover'); // Prevent hover effect on error
-                         recordBtn.disabled = true;
-                         return null;
-                     }
-                 }
-                 if (audioContext.state === 'suspended') {
-                     audioContext.resume().then(() => {
-                        //  console.log("AudioContext resumed.");
-                         if (!analyser) setupAnalyser(); // Ensure analyser setup after resume
-                     });
-                 }
-                 return audioContext;
+                if (!audioContext) {
+                    try {
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        // console.log("AudioContext initialized.");
+                    } catch (e) {
+                        // console.error("Web Audio API is not supported", e);
+                        status.textContent = "Audio Error: Not supported";
+                        catImage.style.cursor = 'not-allowed';
+                        catImage.classList.add('no-hover');
+                        recordBtn.disabled = true;
+                        return null;
+                    }
+                }
+
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume().then(() => {
+                        // console.log("AudioContext resumed.");
+                        if (!analyser) setupAnalyser(); // Ensure analyser setup after resume
+                        if (!audioContextUnlocked) playSilentSoundOnce(); // Try to unlock for iOS
+                    }).catch(e => {
+                        // console.error("Error resuming AudioContext:", e);
+                        // Potentially update UI to reflect this specific failure
+                    });
+                } else if (audioContext.state === 'running') {
+                    // Already running
+                    if (!analyser) setupAnalyser();
+                    if (!audioContextUnlocked) playSilentSoundOnce(); // Try to unlock for iOS
+                }
+                return audioContext;
             }
+
+            function playSilentSoundOnce() {
+                if (audioContextUnlocked || !audioContext || audioContext.state !== 'running') return;
+
+                const buffer = audioContext.createBuffer(1, 1, 22050); // 1 sample, 1 channel, 22.05kHz
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioContext.destination);
+                source.start();
+                source.onended = () => {
+                    source.disconnect(); // Clean up the source node
+                    audioContextUnlocked = true;
+                    // console.log("Silent buffer played, AudioContext should be fully active now for iOS.");
+                };
+            }
+
 
             // --- State Variables ---
             let mediaRecorder;
@@ -337,31 +348,22 @@
 
             // --- Function to Reset UI ---
             const resetUI = (errorMessage = null) => {
-                 // Clear silence timer on any reset
-                 if (silenceTimer) {
-                     clearTimeout(silenceTimer);
-                     silenceTimer = null;
-                 }
-                 stopVisualizerAndSilenceCheck(); // Stop the loop
-
+                 if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+                 stopVisualizerAndSilenceCheck();
                  catImage.style.cursor = 'pointer';
-                 catImage.classList.remove('no-hover');
-                 recordBtn.disabled = false; // Sync logical button state
-                 catImage.classList.remove('talking'); // Use catImage for animation class
+                 catImage.classList.remove('no-hover', 'talking');
                  catImage.classList.add('pulse');
+                 recordBtn.disabled = false;
                  status.textContent = errorMessage || 'Ready';
                  status.className = `absolute bottom-[-40px] text-white text-sm font-semibold px-5 py-2 rounded-full shadow-lg whitespace-nowrap transition-all duration-300 status-ready`;
                  isPaused = false;
                  speechBubble.classList.remove('opacity-100');
                  setTimeout(() => { if (!speechBubble.classList.contains('opacity-100')) speechBubble.classList.add('hidden'); }, 300);
-
                  if (recordingStream) { recordingStream.getTracks().forEach(track => track.stop()); recordingStream = null; }
                  if (mediaStreamSource) { try { mediaStreamSource.disconnect(); } catch(e){} mediaStreamSource = null; }
                  if (currentSourceNode) { try { currentSourceNode.onended = null; currentSourceNode.stop(); currentSourceNode.disconnect(); } catch (e) {} currentSourceNode = null; }
-
                  mediaRecorder = null;
                  audioChunks = [];
-                //  console.log("UI Reset completed");
             };
 
             // --- Function to Update UI State ---
@@ -369,63 +371,56 @@
                  catImage.classList.remove('pulse', 'talking', 'no-hover');
                  catImage.style.cursor = 'pointer';
                  recordBtn.disabled = false;
-
                  let statusText = 'Ready';
                  let statusClass = 'status-ready';
                  let showBubble = false;
                  let bubbleTextContent = "";
-                 let catAnimationClass = 'pulse'; // Default to pulse
-
+                 let catAnimationClass = 'pulse';
                  switch (state) {
                      case 'requesting':
                          statusText = 'Requesting Mic...'; statusClass = 'status-processing';
                          recordBtn.disabled = true; catImage.classList.add('no-hover'); catImage.style.cursor = 'default';
-                         catAnimationClass = ''; // No animation during request
+                         catAnimationClass = '';
                          break;
                      case 'listening':
                          statusText = 'Recording...'; statusClass = 'status-recording';
-                         isPaused = false;
-                         showBubble = true; bubbleTextContent = "Listening...";
-                         catAnimationClass = ''; // Stop pulse during recording (visualizer provides motion)
+                         isPaused = false; showBubble = true; bubbleTextContent = "Listening...";
+                         catAnimationClass = '';
                          break;
                      case 'paused':
                          statusText = 'Paused'; statusClass = 'status-paused';
-                         isPaused = true;
-                         showBubble = true; bubbleTextContent = "Paused...";
-                         catAnimationClass = ''; // No animation when paused
+                         isPaused = true; showBubble = true; bubbleTextContent = "Paused...";
+                         catAnimationClass = '';
                          break;
                      case 'processing':
                          statusText = 'Mixing sounds...'; statusClass = 'status-processing';
                          recordBtn.disabled = true; catImage.classList.add('no-hover'); catImage.style.cursor = 'default';
                          showBubble = true; bubbleTextContent = "Thinking...";
-                         catAnimationClass = ''; // No animation during processing
+                         catAnimationClass = '';
                          break;
                      case 'playing':
                          statusText = 'Talking!'; statusClass = 'status-playing';
                          recordBtn.disabled = true; catImage.classList.add('no-hover'); catImage.style.cursor = 'default';
                          showBubble = true; bubbleTextContent = getRandomPhrase();
-                         catAnimationClass = 'talking'; // Talking animation
+                         catAnimationClass = 'talking';
                          break;
                      case 'error':
-                         statusText = status.textContent || 'Error!'; statusClass = 'status-recording'; // Use red for error
+                         statusText = status.textContent || 'Error!'; statusClass = 'status-recording';
                          catImage.classList.add('no-hover'); catImage.style.cursor = 'default';
-                         catAnimationClass = ''; // No animation on error
-                         setTimeout(() => resetUI(statusText), 2500); // Reset after showing error
+                         catAnimationClass = '';
+                         setTimeout(() => resetUI(statusText), 3500); // Longer timeout for error message
                          break;
                      case 'ready':
-                     default: resetUI(); return; // resetUI handles the 'ready' state
+                     default: resetUI(); return;
                  }
-
                  status.textContent = statusText;
                  status.className = `absolute bottom-[-40px] text-white text-sm font-semibold px-5 py-2 rounded-full shadow-lg whitespace-nowrap transition-all duration-300 ${statusClass}`;
-
                  if(catAnimationClass) catImage.classList.add(catAnimationClass);
-                 else catImage.classList.remove('pulse', 'talking'); // Explicitly remove if no class assigned
-
+                 else catImage.classList.remove('pulse', 'talking');
                  if (showBubble) {
                      speechBubbleText.textContent = bubbleTextContent;
                      speechBubble.classList.remove('hidden');
-                     void speechBubble.offsetWidth; // Reflow
+                     void speechBubble.offsetWidth;
                      speechBubble.classList.add('opacity-100');
                  } else {
                      speechBubble.classList.remove('opacity-100');
@@ -433,58 +428,56 @@
                  }
              };
 
-            // --- Random Phrase Function ---
-             function getRandomPhrase() {
+            function getRandomPhrase() {
                  const phrases = ["That's crazy!", "Hahaha!", "Weird voice!", "LOL!", "Bwahaha!", "You sound silly!", "WOw", "Boop!", "Not Funny😒", "😂", "Again! Again!"];
                  return phrases[Math.floor(Math.random() * phrases.length)];
-             }
+            }
 
             // --- CLICK HANDLER FOR CAT IMAGE ---
              catImage.addEventListener('click', async () => {
-                 if (catImage.classList.contains('no-hover')) {
-                    // console.log("Interaction disabled in current state.");
-                    return;
-                 }
+                 if (catImage.classList.contains('no-hover')) return;
 
+                 // Always try to initialize/unlock AudioContext on user gesture
                  const currentContext = initAudioContext();
                  if (!currentContext) {
-                    //  console.error("Cannot proceed without AudioContext.");
+                     // console.error("Cannot proceed without AudioContext.");
+                     // UI for AudioContext failure is handled in initAudioContext
                      return;
                  }
 
                  if (mediaRecorder && (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused')) {
-                    //  console.log("Stopping recording via image click...");
                      if (mediaRecorder.state !== 'inactive') {
-                         if (silenceTimer) {
-                             clearTimeout(silenceTimer);
-                             silenceTimer = null;
-                            //  console.log("Cleared silence timer on manual stop.");
-                         }
+                         if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
                          mediaRecorder.stop();
                      }
                  } else if (!mediaRecorder || mediaRecorder.state === 'inactive') {
-                    //  console.log("Starting recording via image click...");
-                     resetUI(); // Ensure clean state
-                     startRecording(); // Async function
-                 } else {
-                    // console.warn("MediaRecorder in unexpected state:", mediaRecorder.state);
+                     if (!hasShownMicInfoModal) {
+                         micPermissionModal.classList.remove('hidden');
+                         // Actual recording start will be triggered by modal's button
+                     } else {
+                         resetUI();
+                         startRecording(); // Async function
+                     }
                  }
              });
 
+            // --- Mic Permission Modal Button ---
+            proceedMicPermissionBtn.addEventListener('click', () => {
+                micPermissionModal.classList.add('hidden');
+                localStorage.setItem('hasShownCrazyTomMicInfo', 'true');
+                hasShownMicInfoModal = true;
+                resetUI();
+                startRecording(); // Proceed to start recording
+            });
 
-            // --- Start Recording Function ---
-             async function startRecording() {
+
+            async function startRecording() {
                  setUIState('requesting');
                  try {
                      recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
                      const options = { mimeType: 'audio/webm;codecs=opus' };
                      try { mediaRecorder = new MediaRecorder(recordingStream, options); }
-                     catch (e1) {
-                        //  console.warn("Opus codec not supported, trying default");
-                         mediaRecorder = new MediaRecorder(recordingStream); // Fallback
-                     }
-                    //  console.log("Using mimeType:", mediaRecorder.mimeType);
+                     catch (e1) { mediaRecorder = new MediaRecorder(recordingStream); } // Fallback
                      audioChunks = [];
 
                      if (audioContext && analyser) {
@@ -492,151 +485,132 @@
                           mediaStreamSource = audioContext.createMediaStreamSource(recordingStream);
                           try {
                              mediaStreamSource.connect(analyser);
-                             startVisualizerAndSilenceCheck(); // Start the loop here
-                            //  console.log("Recording stream connected to analyser.");
-                          } catch (connectError) {
-                            //   console.error("Error connecting media stream to analyser:", connectError);
-                              stopVisualizerAndSilenceCheck(); // Stop loop if connection fails
-                          }
-                     } else {
-                        //   console.warn("AudioContext or Analyser not ready for recording visualization/silence check.");
+                             startVisualizerAndSilenceCheck();
+                          } catch (connectError) { stopVisualizerAndSilenceCheck(); }
                      }
 
-                     // MediaRecorder Event Handlers
                      mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunks.push(event.data); };
-
                      mediaRecorder.onstop = async () => {
-                        //   console.log("Recorder stopped.");
                           if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-                          stopVisualizerAndSilenceCheck(); 
-
-                           if (recordingStream) { recordingStream.getTracks().forEach(track => track.stop()); recordingStream = null; }
-                           if (mediaStreamSource) { try { mediaStreamSource.disconnect(); } catch(e){} mediaStreamSource = null; }
-
+                          stopVisualizerAndSilenceCheck();
+                          if (recordingStream) { recordingStream.getTracks().forEach(track => track.stop()); recordingStream = null; }
+                          if (mediaStreamSource) { try { mediaStreamSource.disconnect(); } catch(e){} mediaStreamSource = null; }
                           setUIState('processing');
-
                           if (audioChunks.length === 0) { resetUI('No audio recorded'); return; }
-
                           try {
                               const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
                               const arrayBuffer = await audioBlob.arrayBuffer();
-                              if (audioContext.state === 'suspended') await audioContext.resume();
-
+                              if (audioContext.state === 'suspended') await audioContext.resume(); // Important re-check
                               audioContext.decodeAudioData(arrayBuffer,
-                                 (decodedBuffer) => { /* console.log("Audio decoded."); */ playAlteredAudio(decodedBuffer); },
+                                 (decodedBuffer) => { playAlteredAudio(decodedBuffer); },
                                  (decodeError) => {
-                                    //  console.error("Error decoding audio data:", decodeError);
                                      let errorMsg = `Decode Error: ${decodeError.message || 'Unknown'}`;
                                      resetUI(errorMsg);
                                  }
                               );
-                          } catch (processError) {
-                            //    console.error("Error processing audio blob:", processError);
-                               resetUI('Error processing audio');
-                           }
+                          } catch (processError) { resetUI('Error processing audio'); }
                            audioChunks = [];
                       };
-
                        mediaRecorder.onpause = () => {
-                           if (silenceTimer) {
-                               clearTimeout(silenceTimer);
-                               silenceTimer = null;
-                            //    console.log("Cleared silence timer on pause.");
-                           }
-                           stopVisualizerAndSilenceCheck(); 
-                           setUIState('paused');
+                           if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+                           stopVisualizerAndSilenceCheck(); setUIState('paused');
                        };
                        mediaRecorder.onresume = () => {
-                           if (analyser && mediaStreamSource) {
-                               startVisualizerAndSilenceCheck(); 
-                           }
+                           if (analyser && mediaStreamSource) startVisualizerAndSilenceCheck();
                            setUIState('listening');
                        };
                        mediaRecorder.onerror = (event) => {
-                        //    console.error("MediaRecorder error:", event.error);
                            if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-                           stopVisualizerAndSilenceCheck(); 
+                           stopVisualizerAndSilenceCheck();
                            status.textContent = `Record Error: ${event.error.name}`;
-                           setUIState('error'); 
+                           setUIState('error');
                        };
-
-                     mediaRecorder.start(100); 
+                     mediaRecorder.start(100);
                      setUIState('listening');
-
                  } catch (error) {
-                    //   console.error('Mic/Recording Error:', error);
-                      status.textContent = (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') ? 'Microphone access denied!' : `Mic Error: ${error.name}`;
+                      // console.error('Mic/Recording Error:', error);
+                      let userMessage = `Mic Error: ${error.name}`;
+                      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                          userMessage = 'Mic access denied. Check browser site settings.';
+                      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                          userMessage = 'No microphone found. Please connect one.';
+                      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                          userMessage = 'Mic busy or hardware error. Try another or close apps using it.';
+                      } else if (error.name === 'AbortError') {
+                          userMessage = 'Mic request aborted. Try again.';
+                      } else if (error.name === 'SecurityError') {
+                          userMessage = 'Mic access blocked by security policy.';
+                      }
+                      status.textContent = userMessage;
                       if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-                      stopVisualizerAndSilenceCheck(); 
-                      setUIState('error'); 
+                      stopVisualizerAndSilenceCheck();
+                      setUIState('error');
                  }
              }
 
-            // --- Play Altered Audio (FUNNY VOICE EFFECT) ---
             function playAlteredAudio(audioBuffer) {
                  if (!audioContext || !analyser) { resetUI('Audio playback error'); return; }
-                 if (currentSourceNode) { try { currentSourceNode.stop(); currentSourceNode.disconnect(); } catch (e) {} }
 
+                 // Double-check AudioContext state before playing, though initAudioContext should handle primary unlock
+                 if (audioContext.state === 'suspended') {
+                    //  console.warn("AudioContext still suspended before playback. Attempting resume again.");
+                     audioContext.resume().then(() => {
+                        //  console.log("AudioContext resumed just before playback.");
+                         proceedWithPlayback(audioBuffer);
+                     }).catch(e => {
+                        //  console.error("Could not resume AudioContext for playback:", e);
+                         resetUI('Playback failed: Audio Context');
+                     });
+                     return; // Wait for resume attempt
+                 }
+                 proceedWithPlayback(audioBuffer);
+            }
+
+            function proceedWithPlayback(audioBuffer){
+                 if (currentSourceNode) { try { currentSourceNode.stop(); currentSourceNode.disconnect(); } catch (e) {} }
                  const source = audioContext.createBufferSource();
                  const filter = audioContext.createBiquadFilter();
                  const compressor = audioContext.createDynamicsCompressor();
                  const outputGain = audioContext.createGain();
-
                  source.buffer = audioBuffer;
-                 source.playbackRate.value = 1.6; // Chipmunk pitch
-
+                 source.playbackRate.value = 1.6;
                  filter.type = 'peaking';
                  filter.frequency.value = 1800;
                  filter.Q.value = 4;
-                 filter.gain.value = 15; // dB
-
+                 filter.gain.value = 15;
                  source.connect(filter);
                  filter.connect(compressor);
                  compressor.connect(outputGain);
                  outputGain.connect(audioContext.destination);
-
-                 outputGain.connect(analyser);
-                 startVisualizerAndSilenceCheck(); 
-
+                 outputGain.connect(analyser); // For visualization during playback
+                 startVisualizerAndSilenceCheck();
                  setUIState('playing');
                  source.start(0);
                  currentSourceNode = source;
-
                  source.onended = () => {
-                    //  console.log("Playback finished.");
-                     stopVisualizerAndSilenceCheck(); 
-                     try { if(source.numberOfOutputs > 0) source.disconnect(); } catch(e){}
-                     try { if(filter.numberOfOutputs > 0) filter.disconnect(); } catch(e){}
-                     try { if(compressor.numberOfOutputs > 0) compressor.disconnect(); } catch(e){}
-                     try { if(outputGain.numberOfOutputs > 0) outputGain.disconnect(); } catch(e){}
-
+                     stopVisualizerAndSilenceCheck();
+                     try { if(source && source.numberOfOutputs > 0) source.disconnect(); } catch(e){}
+                     try { if(filter && filter.numberOfOutputs > 0) filter.disconnect(); } catch(e){}
+                     try { if(compressor && compressor.numberOfOutputs > 0) compressor.disconnect(); } catch(e){}
+                     try { if(outputGain && outputGain.numberOfOutputs > 0) outputGain.disconnect(); } catch(e){}
                      currentSourceNode = null;
                      setUIState('ready');
                  };
                   source.onerror = (e) => {
-                    //   console.error("Audio source node error:", e);
-                      stopVisualizerAndSilenceCheck(); 
+                      stopVisualizerAndSilenceCheck();
                       resetUI("Playback error");
                   }
             }
 
-            // --- Pause/Resume Handler (Space Key) ---
             document.addEventListener('keydown', (event) => {
                  if (event.code === 'Space' && !event.repeat && mediaRecorder && (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused')) {
                      event.preventDefault();
-                     if (mediaRecorder.state === 'recording') {
-                        // console.log("Pausing via spacebar...");
-                        mediaRecorder.pause();
-                     } else if (mediaRecorder.state === 'paused') {
-                        // console.log("Resuming via spacebar...");
-                        mediaRecorder.resume();
-                     }
+                     if (mediaRecorder.state === 'recording') mediaRecorder.pause();
+                     else if (mediaRecorder.state === 'paused') mediaRecorder.resume();
                  }
             });
 
-            // --- Initial Setup ---
             resetUI();
-
         });
     </script>
 </body>
